@@ -2532,7 +2532,6 @@ impl Connection {
         path: &PathRef,
         space: PacketNumberSpace,
         profile: &SendProfile,
-        full_mtu: bool,
         builder: &mut packet::Builder<&mut Vec<u8>>,
         now: Instant,
     ) -> (recovery::Tokens, bool) {
@@ -2556,6 +2555,7 @@ impl Connection {
 
         // Avoid sending path validation probes until the handshake completes,
         // but send them even when we don't have space.
+        let full_mtu = profile.full_mtu();
         if space == PacketNumberSpace::ApplicationData && self.state.connected() {
             // Path validation probes should only be padded if the full MTU is available.
             // The probing code needs to know so it can track that.
@@ -2822,13 +2822,12 @@ impl Connection {
 
             // Add frames to the packet.
             let payload_start = builder.len();
-            let full_mtu = profile.limit() == path.borrow().plpmtu();
             let (mut tokens, mut ack_eliciting) = (recovery::Tokens::new(), false);
             if let Some(close) = closing_frame {
                 self.write_closing_frames(close, &mut builder, space, now, path, &mut tokens);
             } else {
                 (tokens, ack_eliciting) =
-                    self.write_frames(path, space, &profile, full_mtu, &mut builder, now);
+                    self.write_frames(path, space, &profile, &mut builder, now);
             }
             if builder.packet_empty() {
                 // Nothing to include in this packet.
@@ -2840,7 +2839,8 @@ impl Connection {
             // Pad only 1-RTT packets, so as not to prevent coalescing: ack-eliciting ones with a
             // full MTU, or any that end a datagram carrying an Initial, as padding after them
             // joins their ciphertext.
-            let padded = ((ack_eliciting && full_mtu) || initial_sent.is_some()) && builder.pad();
+            let padded =
+                ((ack_eliciting && profile.full_mtu()) || initial_sent.is_some()) && builder.pad();
             if padded {
                 self.stats.borrow_mut().frame_tx.padding += 1;
             }
